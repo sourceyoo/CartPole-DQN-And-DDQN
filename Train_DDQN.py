@@ -102,8 +102,10 @@ def optimize_model(train_batch_size=100):
 
     for i in range(len(train_sample)):
         next_action = next_actions[i].item()
-        q_estimates[i][train_sample[i][1]] = (state_reward(next_state[i], train_sample[i][2]) +
-                                              gamma * next_state_q_estimates[i][next_action].item())
+        q_estimates[i][train_sample[i][1]] = (
+            state_reward(next_state[i], train_sample[i][2])
+            + gamma * next_state_q_estimates[i][next_action].item()
+        )
 
     fit(policy_net, state, q_estimates)
 
@@ -177,6 +179,12 @@ def main():
 
     print(f'best test reward: {best_test_reward}')
 
+    # ---- 학습된 DDQN 모델 저장 (추가한 부분) ----
+    save_path = "ddqn_cartpole.pth"  # 원하면 "ddqn_cartpole.pth"로 바꿔도 됨
+    torch.save(policy_net.state_dict(), save_path)
+    print(f"Saved trained DDQN model to {save_path}")
+
 
 if __name__ == '__main__':
     main()
+

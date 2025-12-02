@@ -7,7 +7,7 @@ from collections import deque
 import random
 
 # Parameters
-use_cuda = True
+use_cuda = False
 episode_limit = 100
 target_update_delay = 2  # update target net every target_update_delay episodes
 test_delay = 10
@@ -100,8 +100,10 @@ def optimize_model(train_batch_size=100):
     next_state_q_estimates = target_net(next_state.to(device)).detach()
 
     for i in range(len(train_sample)):
-        q_estimates[i][train_sample[i][1]] = (state_reward(next_state[i], train_sample[i][2]) +
-                                              gamma * next_state_q_estimates[i].max())
+        q_estimates[i][train_sample[i][1]] = (
+            state_reward(next_state[i], train_sample[i][2])
+            + gamma * next_state_q_estimates[i].max()
+        )
 
     fit(policy_net, state, q_estimates)
 
@@ -175,6 +177,12 @@ def main():
 
     print(f'best test reward: {best_test_reward}')
 
+    # ---- 학습된 모델 저장 (요청한 블록 추가) ----
+    save_path = "dqn_cartpole.pth"
+    torch.save(policy_net.state_dict(), save_path)
+    print(f"Saved trained DQN model to {save_path}")
+
 
 if __name__ == '__main__':
     main()
+
