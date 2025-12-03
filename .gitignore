@@ -2,3 +2,5 @@
 __pycache__/*
 *.pth
 vis_env/
+*.png
+*.csv
