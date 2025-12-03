@@ -39,8 +39,14 @@ target_net.eval()
 optimizer = torch.optim.Adam(params=policy_net.parameters(), lr=learning_rate)
 
 # --- [로그 파일 설정] ---
-log_filename = "dqn_training_log.csv"
+LOG_DIR = "csv"
+os.makedirs(LOG_DIR, exist_ok=True)
+log_filename = os.path.join(LOG_DIR, "dqn_training_log.csv")
 graph_filename = "dqn_training_result.png"
+
+# --- [모델 저장 경로 설정] ---
+MODEL_DIR = "DQN"
+os.makedirs(MODEL_DIR, exist_ok=True)
 
 def init_log_file():
     """CSV 파일 생성 및 헤더 작성"""
@@ -315,14 +321,15 @@ def main():
                 if test_reward > best_test_reward:
                     print('New best test reward. Saving model')
                     best_test_reward = test_reward
-                    torch.save(policy_net.state_dict(), 'dqn_cartpole_best.pth')
+                    best_path = os.path.join(MODEL_DIR, 'dqn_cartpole_best.pth')
+                    torch.save(policy_net.state_dict(), best_path)
 
     except KeyboardInterrupt:
         print("Training stopped manually.")
 
     print(f'Final Best Reward: {best_test_reward}')
     # DQN 모델 저장
-    save_path = "dqn_cartpole_final.pth"
+    save_path = os.path.join(MODEL_DIR, "dqn_cartpole_final.pth")
     torch.save(policy_net.state_dict(), save_path)
     print(f"Saved trained DQN model to {save_path}")
     
