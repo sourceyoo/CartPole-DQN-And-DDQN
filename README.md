@@ -23,7 +23,7 @@ Both methods of training create and save policy model in the same manner, theref
 
 본 프로젝트는 **OpenAI Gym CartPole-v1** 환경에서 **DQN(Deep Q-Network)** 및 **DDQN(Double DQN)** 알고리즘을 직접 구현하고, PyTorch를 기반으로 학습(Training) 및 시각화(Simulation)를 수행하는 강화학습 프로젝트입니다.
 
-특히 \*\*학습 환경(Docker)\*\*과 \*\*시뮬레이션 환경(Host venv)\*\*을 완전히 분리하여 다음 세 가지를 모두 만족하도록 설계되었습니다.
+특히 **학습 환경(Docker)**과 **시뮬레이션 환경(Host venv)**을 완전히 분리하여 다음 세 가지를 모두 만족하도록 설계되었습니다.
 
 1.  **안정적인 의존성 관리** (Environment Isolation)
 2.  **GPU 기반의 고속 학습** (CUDA Support)
@@ -178,16 +178,10 @@ docker build -t cartpole-dqn-env .
     source vis_env/bin/activate
     ```
 
-2.  **DQN 시연:**
+2.  **DQN 시연, DDQN 시연:**
 
     ```bash
-    python play_dqn.py
-    ```
-
-3.  **DDQN 시연:**
-
-    ```bash
-    python play_ddqn.py
+    python Run.py
     ```
 
 -----

@@ -7,11 +7,11 @@ from collections import deque
 import random
 
 # Parameters
-use_cuda = True
-episode_limit = 100
-target_update_delay = 2  # update target net every target_update_delay episodes
+use_cuda = False
+episode_limit = 300
+target_update_delay = 10  # update target net every target_update_delay episodes
 test_delay = 10
-learning_rate = 1e-4
+learning_rate = 1e-3
 epsilon = 1  # initial epsilon
 min_epsilon = 0.1
 epsilon_decay = 0.9 / 2.5e3
@@ -31,17 +31,13 @@ target_net = Model(n_features, n_actions).to(device)
 target_net.load_state_dict(policy_net.state_dict())
 target_net.eval()
 
+optimizer = torch.optim.Adam(params=policy_net.parameters(), lr=learning_rate)
 
+
+# 고속 벡터 연산으로 변경 (for문 제거)
 def get_states_tensor(sample, states_idx):
-    sample_len = len(sample)
-    states_tensor = torch.empty((sample_len, n_features), dtype=torch.float32, requires_grad=False)
-
-    features_range = range(n_features)
-    for i in range(sample_len):
-        for j in features_range:
-            states_tensor[i, j] = sample[i][states_idx][j].item()
-
-    return states_tensor
+    batch_data = [x[states_idx] for x in sample]
+    return torch.tensor(batch_data, dtype=torch.float32)
 
 
 def normalize_state(state):
@@ -60,8 +56,9 @@ def get_action(state, e=min_epsilon):
         # explore
         action = random.randrange(0, n_actions)
     else:
-        state = torch.tensor(state, dtype=torch.float32, device=device)
-        action = policy_net(state).argmax().item()
+        state = torch.tensor(state, dtype=torch.float32, device=device).unsqueeze(0) # 차원 추가
+        with torch.no_grad(): # 예측 시에는 그래디언트 계산 끔 (속도 향상)
+            action = policy_net(state).argmax().item()
 
     return action
 
@@ -69,50 +66,64 @@ def get_action(state, e=min_epsilon):
 def fit(model, inputs, labels):
     inputs = inputs.to(device)
     labels = labels.to(device)
-    train_ds = TensorDataset(inputs, labels)
-    train_dl = DataLoader(train_ds, batch_size=5)
 
-    optimizer = torch.optim.Adam(params=model.parameters(), lr=learning_rate)
     model.train()
-    total_loss = 0.0
-
-    for x, y in train_dl:
-        out = model(x)
-        loss = criterion(out, y)
-        total_loss += loss.item()
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+    
+    # 예측
+    out = model(inputs)
+    loss = criterion(out, labels)
+    
+    # 업데이트 (전역 변수 optimizer 사용)
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
 
     model.eval()
+    return loss.item()
 
-    return total_loss / len(inputs)
 
+def optimize_model(train_batch_size=128):
+    if len(memory) < train_batch_size:
+        return
 
-def optimize_model(train_batch_size=100):
-    train_batch_size = min(train_batch_size, len(memory))
     train_sample = random.sample(memory, train_batch_size)
 
     state = get_states_tensor(train_sample, 0)
     next_state = get_states_tensor(train_sample, 3)
 
+    # 1. 현재 상태의 예측값 미리 계산 (q_estimates)
+    # detach() 중요: 정답지를 만드는 재료이므로 기울기 계산에서 제외
     q_estimates = policy_net(state.to(device)).detach()
     next_state_q_estimates = target_net(next_state.to(device)).detach()
-    next_actions = policy_net(next_state.to(device)).argmax(dim=1)
 
-    for i in range(len(train_sample)):
-        next_action = next_actions[i].item()
-        q_estimates[i][train_sample[i][1]] = (
-            state_reward(next_state[i], train_sample[i][2])
-            + gamma * next_state_q_estimates[i][next_action].item()
-        )
+    # 2. DDQN 로직: 행동 선택 (Policy Net)
+    next_actions = policy_net(next_state.to(device)).detach().argmax(dim=1)
 
-    fit(policy_net, state, q_estimates)
+    # 3. 정답 계산 (Vectorization)
+    batch = list(zip(*train_sample))
+    rewards = torch.tensor([state_reward(s, r) for s, r in zip(next_state, batch[2])], device=device)
+    actions = torch.tensor(batch[1], device=device).unsqueeze(1)
+    
+    # 4. Target Value 계산
+    next_q_values = next_state_q_estimates.gather(1, next_actions.unsqueeze(1)).squeeze(1)
+    expected_q_values = rewards + (gamma * next_q_values)
+
+    # 5. q_estimates 업데이트 (여기가 수정됨!)
+    # 아까처럼 q_targets를 새로 만들지 않고, 위에서 만든 q_estimates에 바로 덮어씌웁니다.
+    q_estimates.scatter_(1, actions, expected_q_values.unsqueeze(1))
+
+    # 6. 학습
+    epochs = 10
+    for _ in range(epochs):
+        # 완성된 정답지(q_estimates)를 넣고 학습
+        fit(policy_net, state, q_estimates)
 
 
 def train_one_episode():
     global epsilon
     current_state = env.reset()
+    if isinstance(current_state, tuple):
+        current_state = current_state[0]
     normalize_state(current_state)
     done = False
     score = 0
@@ -140,8 +151,16 @@ def test():
     score = 0
     reward = 0
     while not done:
-        action = get_action(state)
-        state, env_reward, done, _ = env.step(action)
+        # [수정 5] 테스트는 실력으로만 (epsilon=0)
+        action = get_action(state, e=0.0)
+        
+        step_result = env.step(action)
+        if len(step_result) == 5:
+            state, env_reward, terminated, truncated, _ = step_result
+            done = terminated or truncated
+        else:
+            state, env_reward, done, _ = step_result
+            
         normalize_state(state)
         score += env_reward
         reward += state_reward(state, env_reward)

@@ -9,9 +9,9 @@ import random
 # Parameters
 use_cuda = False
 episode_limit = 100
-target_update_delay = 2  # update target net every target_update_delay episodes
+target_update_delay = 10  # update target net every target_update_delay episodes
 test_delay = 10
-learning_rate = 1e-4
+learning_rate = 1e-3
 epsilon = 1  # initial epsilon
 min_epsilon = 0.1
 epsilon_decay = 0.9 / 2.5e3
@@ -31,17 +31,15 @@ target_net = Model(n_features, n_actions).to(device)
 target_net.load_state_dict(policy_net.state_dict())
 target_net.eval()
 
+# 옵티마이저를 전역 변수로 선언 (기억 유지!)
+optimizer = torch.optim.Adam(params=policy_net.parameters(), lr=learning_rate)
+
 
 def get_states_tensor(sample, states_idx):
-    sample_len = len(sample)
-    states_tensor = torch.empty((sample_len, n_features), dtype=torch.float32, requires_grad=False)
-
-    features_range = range(n_features)
-    for i in range(sample_len):
-        for j in features_range:
-            states_tensor[i, j] = sample[i][states_idx][j].item()
-
-    return states_tensor
+    # 리스트 컴프리헨션으로 데이터만 쏙 뽑아서 한 번에 텐서로 변환
+    # sample 구조: [(state, action, reward, next_state), ...]
+    batch_data = [x[states_idx] for x in sample]
+    return torch.tensor(batch_data, dtype=torch.float32)
 
 
 def normalize_state(state):
@@ -60,36 +58,41 @@ def get_action(state, e=min_epsilon):
         # explore
         action = random.randrange(0, n_actions)
     else:
-        state = torch.tensor(state, dtype=torch.float32, device=device)
-        action = policy_net(state).argmax().item()
+        state_tensor = torch.tensor(state, dtype=torch.float32, device=device).unsqueeze(0)
+        with torch.no_grad():
+            action = policy_net(state_tensor).argmax().item()
 
     return action
 
 
+# [수정 3] 쪼개서 학습하던 부분 제거 -> 통째로 한 번만 학습
 def fit(model, inputs, labels):
     inputs = inputs.to(device)
     labels = labels.to(device)
-    train_ds = TensorDataset(inputs, labels)
-    train_dl = DataLoader(train_ds, batch_size=5)
 
-    optimizer = torch.optim.Adam(params=model.parameters(), lr=learning_rate)
     model.train()
-    total_loss = 0.0
-
-    for x, y in train_dl:
-        out = model(x)
-        loss = criterion(out, y)
-        total_loss += loss.item()
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+    
+    # 1. 100개 데이터를 한 번에 예측
+    out = model(inputs)
+    
+    # 2. 오차 계산
+    loss = criterion(out, labels)
+    
+    # 3. 업데이트 (전역 변수 optimizer 사용)
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
 
     model.eval()
 
-    return total_loss / len(inputs)
+    return loss.item()
 
 
-def optimize_model(train_batch_size=100):
+def optimize_model(train_batch_size=128):
+    # 1. 데이터가 부족하면 그냥 패스 (안전장치)
+    if len(memory) < train_batch_size:
+        return
+    
     train_batch_size = min(train_batch_size, len(memory))
     train_sample = random.sample(memory, train_batch_size)
 
@@ -105,12 +108,19 @@ def optimize_model(train_batch_size=100):
             + gamma * next_state_q_estimates[i].max()
         )
 
-    fit(policy_net, state, q_estimates)
+    # 준비된 데이터(state, q_estimates)를 가지고 10번 반복 학습합니다.
+    # 예전 코드(5개씩 20번)와 비슷한 학습량을 확보하면서도 훨씬 안정적입니다.
+    
+    epochs = 10  # 10번 정도 반복 복습
+    for _ in range(epochs):
+        fit(policy_net, state, q_estimates)
 
 
 def train_one_episode():
     global epsilon
     current_state = env.reset()
+    if isinstance(current_state, tuple):
+        current_state = current_state[0]
     normalize_state(current_state)
     done = False
     score = 0
@@ -133,13 +143,22 @@ def train_one_episode():
 
 def test():
     state = env.reset()
+    if isinstance(state, tuple): state = state[0]
     normalize_state(state)
     done = False
     score = 0
     reward = 0
     while not done:
-        action = get_action(state)
-        state, env_reward, done, _ = env.step(action)
+        #테스트 때는 무조건 실력으로만 (epsilon=0)
+        action = get_action(state, e=0.0)
+        
+        step_result = env.step(action)
+        if len(step_result) == 5:
+            state, env_reward, terminated, truncated, _ = step_result
+            done = terminated or truncated
+        else:
+            state, env_reward, done, _ = step_result
+            
         normalize_state(state)
         score += env_reward
         reward += state_reward(state, env_reward)
