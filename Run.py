@@ -10,7 +10,7 @@ def main():
     use_cuda = False
     device = torch.device("cuda" if use_cuda and torch.cuda.is_available() else "cpu")
     policy_net = Model(len(env.observation_space.high), env.action_space.n)
-    policy_net.load_state_dict(torch.load('dqn_cartpole_best.pth'))
+    policy_net.load_state_dict(torch.load('DDQN/ddqn_cartpole_best.pth'))
     policy_net.to(device)
     policy_net.eval()
 

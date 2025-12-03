@@ -6,22 +6,27 @@ import gym
 from collections import deque
 import random
 import numpy as np
-import csv      # [추가] CSV 저장을 위해
-import matplotlib.pyplot as plt # [추가] 그래프 그리기 위해
+import csv
+import matplotlib.pyplot as plt
 import os
 
-# Parameters
+# ---------------------------------------------------------
+# Hyperparameters & Global Configuration
+# ---------------------------------------------------------
 use_cuda = True
 episode_limit = 300
 target_update_delay = 10
 test_delay = 10
-learning_rate = 0.001
+learning_rate = 1e-4
 epsilon = 1
 min_epsilon = 0.1
 epsilon_decay = 0.9 / 2.5e3
 gamma = 0.99
 memory_len = 10000
 
+# ---------------------------------------------------------
+# Environment & Model Setup
+# ---------------------------------------------------------
 env = gym.make('CartPole-v1')
 n_features = len(env.observation_space.high)
 n_actions = env.action_space.n
@@ -37,43 +42,58 @@ target_net.eval()
 
 optimizer = torch.optim.Adam(params=policy_net.parameters(), lr=learning_rate)
 
-# --- [추가] 로그 파일 설정 ---
+# ---------------------------------------------------------
+# Logging & Model Save Paths
+# ---------------------------------------------------------
 LOG_DIR = "csv"
 os.makedirs(LOG_DIR, exist_ok=True)
 log_filename = os.path.join(LOG_DIR, "ddqn_training_log.csv")
 graph_filename = "ddqn_training_result.png"
 
-# --- [모델 저장 경로 설정] ---
 MODEL_DIR = "DDQN"
 os.makedirs(MODEL_DIR, exist_ok=True)
 
+# ---------------------------------------------------------
+# Initialize CSV log file with headers
+# ---------------------------------------------------------
 def init_log_file():
-    """CSV 파일 생성 및 헤더 작성"""
     with open(log_filename, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(['episode', 'score', 'reward', 'avg_loss', 'avg_q', 'epsilon'])
 
+# ---------------------------------------------------------
+# Append a single row of training metrics to the CSV log
+# ---------------------------------------------------------
 def save_log(episode, score, reward, avg_loss, avg_q, epsilon):
-    """한 줄씩 로그 저장"""
     with open(log_filename, 'a', newline='') as f:
         writer = csv.writer(f)
         writer.writerow([episode, score, reward, avg_loss, avg_q, epsilon])
 
-# ----------------------------
-
+# ---------------------------------------------------------
+# Extract specific state data from batch and convert to Tensor
+# ---------------------------------------------------------
 def get_states_tensor(sample, states_idx):
     batch_data = [x[states_idx] for x in sample]
     return torch.tensor(batch_data, dtype=torch.float32)
 
+# ---------------------------------------------------------
+# Normalize state values for better network stability
+# ---------------------------------------------------------
 def normalize_state(state):
     state[0] /= 2.5
     state[1] /= 2.5
     state[2] /= 0.3
     state[3] /= 0.3
 
+# ---------------------------------------------------------
+# Calculate custom reward based on state (Cart position & Angle)
+# ---------------------------------------------------------
 def state_reward(state, env_reward):
     return env_reward - (abs(state[0]) + abs(state[2])) / 2.5
 
+# ---------------------------------------------------------
+# Select action using Epsilon-Greedy strategy
+# ---------------------------------------------------------
 def get_action(state, e=min_epsilon):
     if random.random() < e:
         action = random.randrange(0, n_actions)
@@ -83,6 +103,9 @@ def get_action(state, e=min_epsilon):
             action = policy_net(state).argmax().item()
     return action
 
+# ---------------------------------------------------------
+# Train the model using one step of backpropagation
+# ---------------------------------------------------------
 def fit(model, inputs, labels):
     inputs = inputs.to(device)
     labels = labels.to(device)
@@ -98,18 +121,20 @@ def fit(model, inputs, labels):
     model.eval()
     return loss.item()
 
+# ---------------------------------------------------------
+# Double DQN Optimization Logic
+# ---------------------------------------------------------
 def optimize_model(train_batch_size=128):
     if len(memory) < train_batch_size:
-        return 0.0, 0.0 # [수정] 학습 안 함 -> 0 반환
+        return 0.0, 0.0
 
     train_sample = random.sample(memory, train_batch_size)
 
     state = get_states_tensor(train_sample, 0)
     next_state = get_states_tensor(train_sample, 3)
 
-    # [수정] 모니터링을 위해 Q값 저장
     q_estimates = policy_net(state.to(device)).detach()
-    avg_q_val = q_estimates.mean().item() # 현재 평균 Q값
+    avg_q_val = q_estimates.mean().item()
 
     next_state_q_estimates = target_net(next_state.to(device)).detach()
     next_actions = policy_net(next_state.to(device)).detach().argmax(dim=1)
@@ -123,7 +148,6 @@ def optimize_model(train_batch_size=128):
 
     q_estimates.scatter_(1, actions, expected_q_values.unsqueeze(1))
 
-    # [수정] Loss 평균 계산
     total_loss = 0
     epochs = 10
     for _ in range(epochs):
@@ -132,6 +156,9 @@ def optimize_model(train_batch_size=128):
 
     return total_loss / epochs, avg_q_val
 
+# ---------------------------------------------------------
+# Run a single training episode interaction and optimization
+# ---------------------------------------------------------
 def train_one_episode():
     global epsilon
     current_state = env.reset()
@@ -142,7 +169,6 @@ def train_one_episode():
     score = 0
     reward = 0
     
-    # [수정] 통계 변수
     episode_loss = 0
     episode_q = 0
     optimize_count = 0
@@ -164,7 +190,6 @@ def train_one_episode():
         score += env_reward
         reward += state_reward(next_state, env_reward)
 
-        # [수정] 반환값 받기
         loss, q_val = optimize_model(100)
         
         if loss != 0.0:
@@ -175,12 +200,14 @@ def train_one_episode():
         if epsilon > min_epsilon:
             epsilon -= epsilon_decay
 
-    # [수정] 평균 계산
     avg_loss = episode_loss / optimize_count if optimize_count > 0 else 0
     avg_q = episode_q / optimize_count if optimize_count > 0 else 0
 
     return score, reward, avg_loss, avg_q
 
+# ---------------------------------------------------------
+# Evaluate model performance without exploration
+# ---------------------------------------------------------
 def test():
     state = env.reset()
     if isinstance(state, tuple): state = state[0]
@@ -201,12 +228,13 @@ def test():
         reward += state_reward(state, env_reward)
     return score, reward
 
-# --- [수정된 그래프 그리기 함수] ---
+# ---------------------------------------------------------
+# Generate and save training history graphs
+# ---------------------------------------------------------
 def save_plots(history):
-    # 크기 키움 (가로 15, 세로 15)
     plt.figure(figsize=(15, 15))
 
-    # 1. Score (생존 시간)
+    # 1. Score
     plt.subplot(3, 2, 1)
     plt.plot(history['score'], label='Score', color='blue', alpha=0.6)
     if len(history['score']) >= 10:
@@ -218,7 +246,7 @@ def save_plots(history):
     plt.legend()
     plt.grid(True, alpha=0.3)
 
-    # 2. Reward (안정성 점수) - [추가됨!]
+    # 2. Reward
     plt.subplot(3, 2, 2)
     plt.plot(history['reward'], label='Reward', color='magenta', alpha=0.6)
     if len(history['reward']) >= 10:
@@ -262,11 +290,13 @@ def save_plots(history):
     print(f"Graph saved to {graph_filename}")
     plt.close()
 
+# ---------------------------------------------------------
+# Main execution loop
+# ---------------------------------------------------------
 def main():
     best_test_reward = -float('inf')
     init_log_file()
     
-    # [수정] reward도 저장
     history = {'score': [], 'reward': [], 'avg_q': [], 'loss': [], 'epsilon': []}
 
     print(f"Logging to {log_filename}...")
@@ -275,9 +305,8 @@ def main():
         for i in range(episode_limit):
             score, reward, avg_loss, avg_q = train_one_episode()
             
-            # 리스트에 추가
             history['score'].append(score)
-            history['reward'].append(reward) # [추가]
+            history['reward'].append(reward) 
             history['avg_q'].append(avg_q)
             history['loss'].append(avg_loss)
             history['epsilon'].append(epsilon)
@@ -305,7 +334,6 @@ def main():
     final_path = os.path.join(MODEL_DIR, "ddqn_cartpole_final.pth")
     torch.save(policy_net.state_dict(), final_path)
     
-    # [추가] 마지막에 그래프 그리기
     save_plots(history)
 
 if __name__ == '__main__':
