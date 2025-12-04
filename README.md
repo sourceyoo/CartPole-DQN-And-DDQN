@@ -203,5 +203,5 @@ docker build -t cartpole-dqn-env .
 - **DDQN 학습 곡선**  
   ![DDQN Training Result](image/ddqn_training_result.png)
 
-- **DDQN 학습 곡선**  
+- **Duel DQN 학습 곡선**  
   ![Duel_DQN Training Result](image/duel_dqn_training_result.png)

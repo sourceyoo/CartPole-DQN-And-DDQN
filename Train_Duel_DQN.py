@@ -21,12 +21,12 @@ use_cuda = True
 episode_limit = 300
 target_update_delay = 10
 test_delay = 10
-learning_rate = 1e-3  # 학습률
+learning_rate = 1e-4  # 학습률
 epsilon = 1.0
 min_epsilon = 0.1
 # epsilon_decay: 스텝 단위로 감소 (약 2500 스텝 동안 0.9 감소)
 epsilon_decay = 0.9 / 2.5e3 
-gamma = 0.90
+gamma = 0.99
 memory_len = 10000
 train_batch_size = 128
 #train_epochs 변수 제거 (DQN은 1회만 업데이트해야 함)
